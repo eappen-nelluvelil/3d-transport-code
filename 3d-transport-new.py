@@ -1,13 +1,14 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib.animation import FuncAnimation, FFMpegWriter
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import gmsh
 import meshio
 import sys
 from collections import defaultdict, deque
 import networkx as nx
-from matplotlib.animation import FuncAnimation, FFMpegWriter
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from IPython.display import HTML
 
 # Function to create a 3D tetrahedral cubic mesh in gmsh
@@ -319,7 +320,7 @@ def reduce_deps(tet_idx, nbr_deps_per_tet, deps_per_tet, \
             sweep_order.add_edge(tet_idx, nbr_idx)
 
         # Reduce the number of dependencies of neighboring tet
-        # by 1 since one of its edges has received information from the same
+        # by 1 since one of its faces has received information from the same
         # edge of the current tet
         deps_per_tet[nbr_idx] -= 1
 
@@ -497,10 +498,12 @@ def compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces, tets_normals,
                 # face
                 # # If so, then the same face for neighboring tets is an inflow face
                 dp = np.dot(dir_vec, face_normal)
-                if dp >= 0.0: # Check for outflow edge
+                # if dp >= 0.0: # Check for outflow edge
+                #     sweep_order.add_edge(tet_idx, nbr_idx)
+                #     nbr_deps_per_tet[tet_idx].append(nbr_idx)
+                if dp > 0.0 and (not sweep_order.has_edge(tet_idx, nbr_idx)):
                     sweep_order.add_edge(tet_idx, nbr_idx)
                     nbr_deps_per_tet[tet_idx].append(nbr_idx)
-
 
     # Buffer of tets that are ready to solve (tets that have zero dependencies)
     solve_buffer = deque([tet_idx for tet_idx, deps in deps_per_tet.items() if deps == 0])
@@ -638,6 +641,101 @@ def plot_sweep_order(sweep_order, dir_vecs, dir_idx, nodes,
     # # also as an HTML file
     # print(f"Animation saved as {sweep_order_HTML_anim_fname}.")
 
+def plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec,
+                          pause_time=1.5):
+    # Enable interactive mode
+    plt.ion()
+
+    # Set up the figure and 3D axes
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Define a colormap for levels
+    num_levels = max(tetrahedron_levels.values()) + 1
+    colormap   = cm.get_cmap('tab10', num_levels)
+
+    # Calculate mesh bounds
+    x_min, x_max = np.min(nodes[:, 0]), np.max(nodes[:, 0])
+    y_min, y_max = np.min(nodes[:, 1]), np.max(nodes[:, 1])
+    z_min, z_max = np.min(nodes[:, 2]), np.max(nodes[:, 2])
+
+    # Define the vector origin off to the side of the mesh
+    vector_origin = np.array([x_max + 0.5, y_max + 0.5, z_max + 0.5])  # adjust the offset as needed
+
+    # Add the direction vector
+    ax.quiver(
+        vector_origin[0], vector_origin[1], vector_origin[2],  # starting point of vector
+        dir_vec[0], dir_vec[1], dir_vec[2],  # direction vector
+        color="red", linewidth=2, arrow_length_ratio=0.1
+    )
+
+    # Set the plot limits and aspect ratio
+    ax.set_aspect('auto')
+    ax.set_xlim(x_min - 1, x_max + 2)  # Extend limits to fit the vector
+    ax.set_ylim(y_min - 1, y_max + 2)
+    ax.set_zlim(z_min - 1, z_max + 2)
+
+    # Track plotted tetrahedrons to allow adding/removing as needed
+    plotted_tetrahedrons = []
+
+    # Start at level 0
+    level = 0
+
+    while 0 <= level < num_levels:
+        # Save the current view limits and angle
+        xlim, ylim, zlim = ax.get_xlim(), ax.get_ylim(), ax.get_zlim()
+        elev, azim = ax.elev, ax.azim
+
+        # Plot tetrahedrons at the current level if advancing forward
+        for tet_index, tet_level in tetrahedron_levels.items():
+            if tet_level == level:
+                faces = tets_to_faces[tet_index]
+                color = colormap(level / num_levels) # Map level to color
+                face_coords = [nodes[face] for face in faces]
+                poly = Poly3DCollection(face_coords, color=color, alpha=0.9, edgecolor="k")
+                plotted_tetrahedrons.append((level, poly))  # Track the added poly for removal if needed
+                ax.add_collection3d(poly)
+        
+        # Restore the saved limits and view angle
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_zlim(zlim)
+        ax.view_init(elev=elev, azim=azim)
+
+        # Pause to display the current level before moving to the next
+        plt.draw()
+        plt.pause(pause_time)
+
+        # Input control for navigation
+        print("Options: 'Enter' to go forward, 'b' to go backward, 'r' to restart.")
+        input_choice = input().strip().lower()
+
+        if input_choice == 'b': # Go back a level
+            # Remove tetrahedrons from the current level
+            for lev, poly in plotted_tetrahedrons:
+                if lev == level:
+                    poly.remove()
+            plotted_tetrahedrons = [(lev, poly) for lev, poly in plotted_tetrahedrons if lev != level]
+            level -= 1
+        elif input_choice == 'r': # Restart
+            print("Restarting ...")
+            for _, poly in plotted_tetrahedrons:
+                poly.remove()
+            plotted_tetrahedrons.clear()
+            ax.quiver(
+                vector_origin[0], vector_origin[1], vector_origin[2],  # starting point of vector
+                dir_vec[0], dir_vec[1], dir_vec[2],  # direction vector
+                color="red", linewidth=2, arrow_length_ratio=0.1
+            )
+            level = 0 # Reset to start over again from level 0
+        else: # Advance forward
+            level += 1
+        
+
+    # Keep the plot open after all levels are displayed
+    plt.ioff()
+    plt.show()
+
 def main():
     # Create the mesh
     # l = 1.0
@@ -674,9 +772,15 @@ def main():
     #             if np.dot(dir_vec, normal) == 0.0:
     #                 print("parallel")
 
+    # Plot the sweep order for a given direction vector
     sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
                                         tets_normals, boundary_faces)
-    
-    plot_sweep_order(sweep_order, dir_vecs, dir_idx, nodes, tets_to_faces)
+    tetrahedron_levels = compute_levels(sweep_order)
+
+    # plot_sweep_order(sweep_order, dir_vecs, dir_idx, nodes, tets_to_faces)
+
+    # Plot the overall tetrahedral mesh and a given direction vector
+    print(dir_vec)
+    plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec)
 
 main()
