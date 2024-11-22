@@ -103,6 +103,9 @@ def extract_mesh_info(mesh_fname):
 
     # Get the tetrahedral elements, i.e., which nodes make a tetrahedron
     tetrahedrons = mesh.cells_dict.get("tetra")
+    # Sort the nodes for each tetrahedron
+    for tet_idx, tet in enumerate(tetrahedrons):
+        tetrahedrons[tet_idx, :] = np.sort(tet)
 
     # Get the edges of the tetrahedrons (connectivity of edges)
     tetras_to_edges = defaultdict(list)
@@ -199,9 +202,10 @@ def find_boundary_and_internal_faces(faces_to_tets):
 
 # Generate discrete directions given the number of polar
 # and azimuthal angles
+# Also create the weights for GLC quadrature
 def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
     # Polar angles
-    mus, _ = np.polynomial.legendre.leggauss(n_polar)
+    mus, mu_weights = np.polynomial.legendre.leggauss(n_polar)
 
     # Azimuthal angles
     azis, d_azi = np.linspace(0, 2*np.pi, num=n_azi, endpoint=False, retstep=True)
@@ -211,7 +215,11 @@ def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
     x_vals = []
     y_vals = []
     z_vals = []
-    for mu in mus:
+
+    # List of weights for GLC quadrature
+    glc_weights = []
+
+    for mu, mu_w in zip(mus, mu_weights):
         for azi in azis:
             x = np.sqrt(1-mu**2)*np.cos(azi)
             y = np.sqrt(1-mu**2)*np.sin(azi)
@@ -220,6 +228,14 @@ def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
             x_vals.append(x)
             y_vals.append(y)
             z_vals.append(z)
+
+            glc_weights.append(mu_w)
+
+    # Multiply by azimuthal weight
+    glc_weights = np.array(glc_weights) * (2*np.pi/n_azi)
+
+    # Normalize the GLC weights so that they sum up to 4*pi
+    glc_weights = (glc_weights * (4 * np.pi))/np.sum(glc_weights)
 
     # Store direction vectors
     dir_vecs = list(zip(x_vals, y_vals, z_vals))
@@ -256,7 +272,7 @@ def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
 
         plt.show()
 
-    return dir_vecs
+    return dir_vecs, glc_weights
 
 # Compute a normal vector for the face of a tetrahedron,
 # which are defined by the nodes that make up the face
@@ -468,8 +484,8 @@ def compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces, tets_normals,
                 deps_per_tet[tet_idx] -= 1
             
             # If boundary face and is an inflow face (relative to dir),
-            # reduce the tet's dependencies by 1 since by impose BCs
-            # on boundary faces
+            # reduce the tet's dependencies by 1 since this is a incident
+            # face relative to the direction
             if (tuple(face) in boundary_faces) and dp < 0.0:
                 deps_per_tet[tet_idx] -= 1
 
@@ -557,89 +573,6 @@ def compute_levels(dag):
             levels[node] = max(levels[pred] for pred in predecessors) + 1
 
     return levels
-
-def plot_sweep_order(sweep_order, dir_vecs, dir_idx, nodes,
-                     tets_to_faces):
-    print(f"Current direction: {dir_vecs[dir_idx]}")
-
-    task_graph = sweep_order
-
-    # Compute the levels using the task_graph
-    tetrahedron_levels = compute_levels(task_graph)
-
-    # Group tetrahedrons by their levels
-    grouped_tetrahedrons = {}
-    for idx, level in tetrahedron_levels.items():
-        if level not in grouped_tetrahedrons:
-            grouped_tetrahedrons[level] = []
-        grouped_tetrahedrons[level].append(idx)
-
-    # Create a color mapping based on tetrahedron orders
-    unique_orders = set(tetrahedron_levels.values())
-    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_orders)))  # Use a colormap
-    order_color_mapping = {order: colors[i] for i, order in enumerate(sorted(unique_orders))}
-
-    # Function to plot all tetrahedrons of a specific order
-    def plot_tetrahedrons_by_order(ax, tetrahedron_order, nodes, tets_to_faces):
-        if tetrahedron_order in grouped_tetrahedrons:
-            for tetrahedron_idx in grouped_tetrahedrons[tetrahedron_order]:
-                tetrahedron_faces = tets_to_faces[tetrahedron_idx]
-                color = order_color_mapping[tetrahedron_order]  # Get the color for the current tetrahedron order
-                
-                for face in tetrahedron_faces:
-                    face_coords = nodes[face]
-                    poly3d = Poly3DCollection([face_coords], facecolors=color, edgecolors='black', alpha=0.5)
-                    ax.add_collection3d(poly3d)
-
-    # Function to update the plot during animation
-    def update(frame, ax, nodes, tets_to_faces):
-        ax.clear()
-        
-        # Plot all tetrahedrons up to the current frame
-        for order in range(frame + 1):
-            plot_tetrahedrons_by_order(ax, order, nodes, tets_to_faces)
-        
-        # Set limits and labels for the axes
-        ax.set_xlim([np.min(nodes[:, 0]), np.max(nodes[:, 0])])
-        ax.set_ylim([np.min(nodes[:, 1]), np.max(nodes[:, 1])])
-        ax.set_zlim([np.min(nodes[:, 2]), np.max(nodes[:, 2])])
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title(f'Frame: {frame}')
-
-    # Create a figure and 3D axis
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Create animation
-    num_frames = len(unique_orders)  # Number of unique orders
-    anim = FuncAnimation(fig, update, frames=num_frames, 
-                        fargs=(ax, nodes, tets_to_faces), 
-                        interval=1000)
-
-    # Save the animation as an MP4 file
-    # Set the path to the ffmpeg executable
-    ffmpeg_path = r';C:\Users\eappe\ffmpeg-2024-10-24-git-153a6dc8fa-full_build\bin\ffmpeg.exe'
-    os.environ['PATH'] += ffmpeg_path
-    writer = FFMpegWriter(fps=1)
-    
-    sweep_order_anim_fname = f"animation-direction-{dir_idx}.mp4"
-    anim.save(sweep_order_anim_fname, writer=writer)
-
-    # Display a message indicating that the animation has been saved
-    print(f"Animation saved as {sweep_order_anim_fname}.")
-
-    # # Also save animation as HTML file
-    # sweep_order_HTML_anim_fname = f"animation-direction-{dir_idx}.html"
-    # anim.save(sweep_order_HTML_anim_fname, writer='html', fps=15)
-
-    # # Display the HTML animation
-    # HTML(sweep_order_HTML_anim_fname)
-
-    # # Display a message indicating that the animation has been saved
-    # # also as an HTML file
-    # print(f"Animation saved as {sweep_order_HTML_anim_fname}.")
 
 def plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec,
                           pause_time=1.5):
@@ -736,13 +669,244 @@ def plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec,
     plt.ioff()
     plt.show()
 
+# Determine the outflow and inflow faces of a tetrahedron
+# Inputs: dir_vec   = 1D ndarray for the current direction vector
+#                     in the sweep
+#         tet_nodes = 1D ndarray of tetrahedron nodes 
+#                     Nodes are ordered from least to greatest
+#         tet_faces = List of lists, where each sub-list contains the 3 nodes
+#                     that make up a face of the given tetrahedron
+#                     tet_faces contains 4 sub-lists, with each sub-list containing
+#                     3 nodes
+#         tet_normals = List of 1D ndarrays, where each 1D ndarray is the
+#                       outward pointing normal for the corresponding tet. face                       face
+def detetermine_of_and_if_faces(dir_vec, tet_normals):
+
+    # Determine outflow and inflow faces
+    of_faces_idxs = [] # List of face indices
+    if_faces_idxs = [] # List of face indices
+
+    for normal_idx, normal in enumerate(tet_normals):
+        if np.dot(dir_vec, normal) > 0.0:
+            of_faces_idxs.append(normal_idx)
+        elif np.dot(dir_vec, normal) < 0.0:
+            if_faces_idxs.append(normal_idx)
+
+    return of_faces_idxs, if_faces_idxs
+
+def compute_jacobian(tet_nodes, nodes):
+    # Jacobian matrix of transformation from physical tet to reference tet
+    # Each column of the matrix is of the form 
+    # [x_i - x_1, y_i - y_1, z_i - z_i]
+    jac = np.zeros((3, 3))
+    for idx in np.arange(0, 3):
+        jac[:, idx] = nodes[tet_nodes[idx + 1], :] - nodes[tet_nodes[0], :]
+
+    # The absolute value of the determinant of the Jacobian is
+    # the volume scaling factor from the reference tet to the physical tet
+    det_jac     = np.linalg.det(jac)
+    abs_det_jac = np.abs(det_jac)
+
+    return jac, det_jac, abs_det_jac
+
+def construct_outflow_linear_system(dir_vec, tet_nodes, 
+                                    tet_faces, tet_normals, 
+                                    of_faces_idxs, nodes):
+    # Construct outflow linear system
+    m_2d_sum = np.zeros((4, 4))
+    for of_face_idx in of_faces_idxs:
+        tet_normal = tet_normals[of_face_idx]
+        alpha = np.dot(dir_vec, tet_normal) # Constant
+        
+        # Extract coordinates for each face
+        face_nodes = np.array(tet_faces[of_face_idx])
+        face_coords = np.zeros((3, 3))
+        for idx, node in enumerate(face_nodes):
+            face_coords[idx, :] = nodes[node, :]
+        
+        # Compute cross-product of Jacobian matrix for each o.w. face
+        # (scaling factor for transformation)
+        j1 = face_coords[1, :] - face_coords[0, :]
+        j2 = face_coords[2, :] - face_coords[0, :]
+        abs_norm_cross_prod = np.linalg.norm(np.cross(j1, j2))
+
+        # The M^{2D}-diagonal entries are given by 
+        # \int_{ref. triangle} b_i * b*j dA = 
+        # 1/24 if i != j
+        # 1/12 if i  = j
+        m_2d = np.full((4, 4), 1/24.0)
+        np.fill_diagonal(m_2d, 1/12.0)
+
+        # Zero out the basis function that's zero on the current
+        # face
+        # This basis functions corresponds to the node that's not on
+        # the current face
+        zero_node = np.setdiff1d(tet_nodes, face_nodes, assume_unique=True)
+        zero_node_idx = np.nonzero(np.isin(tet_nodes, zero_node))[0]
+        
+        m_2d[zero_node_idx, :] = 0.0; m_2d[:, zero_node_idx] = 0.0
+
+        # Add up the contributions the overall M^{2D} matrix
+        m_2d_sum += (alpha * abs_norm_cross_prod * m_2d)
+    
+    return m_2d_sum
+
+# Create overall upwind flux vector, initialized to 0
+# Loop through the inflow faces of the current tet
+#   - Construct the local M^{2D} matrix for the current face
+#   - Zero out the row that corresponds to the node not on the 
+#       current inflow face
+#   - Get angular fluxes for current uw nbr that shares this inflow face
+#   - Rearrange the uw nbr angular fluxes so that its angular flux ordering
+#     matches the ordering of angular fluxes of the current tet
+#   - Multiply the M^{2D} matrix with the permuted angular fluxes of the uw nbr
+#   - Add the contribution to the overall upwind flux vector
+def construct_inflow_vec(dir_vec, current_tet, tet_nodes, 
+                         tet_faces, tet_normals, 
+                         if_faces_idxs, faces_to_tets,
+                         angular_fluxes, nbr_tet_nodes, 
+                         nodes):
+    
+    tot_surface_inflow_vec = np.zeros((4, ))
+    for if_face_idx in if_faces_idxs:
+        face_nodes    = tet_faces[if_face_idx]
+        tet_normal    = tet_normals[if_face_idx]
+        
+        alpha = -np.dot(dir_vec, tet_normal) # Constant
+
+        # Extract coordinates for each face
+        face_nodes = np.array(tet_faces[if_face_idx])
+        face_coords = np.zeros((3, 3))
+        for idx, node in enumerate(face_nodes):
+            face_coords[idx, :] = nodes[node, :]
+
+        # Compute cross-product of Jacobian matrix for each o.w. face
+        # (scaling factor for transformation)
+        j1 = face_coords[1, :] - face_coords[0, :]
+        j2 = face_coords[2, :] - face_coords[0, :]
+        abs_norm_cross_prod = np.linalg.norm(np.cross(j1, j2))
+
+        # The M^{2D}-diagonal entries are given by 
+        # \int_{ref. triangle} b_i * b*j dA = 
+        # 1/24 if i != j
+        # 1/12 if i  = j
+        m_2d = np.full((4, 4), 1/24.0)
+        np.fill_diagonal(m_2d, 1/12.0)
+
+        # Zero out the basis function that's zero on the current
+        # face
+        # This basis functions corresponds to the node that's not on
+        # the current face
+        zero_node = np.setdiff1d(tet_nodes, face_nodes, assume_unique=True)
+        zero_node_idx = np.nonzero(np.isin(tet_nodes, zero_node))[0]
+
+        m_2d[zero_node_idx, :] = 0.0; m_2d[:, zero_node_idx] = 0.0
+
+        m_2d *= (alpha * abs_norm_cross_prod)
+
+        # Get the upwind flux for this inflow face
+        # Tets that share this face 
+        tet_nbrs = np.array(faces_to_tets[tuple(if_face_idx)])
+
+        # Get the uw nbr angular fluxes
+        uw_nbr = tet_nbrs[tet_nbrs != current_tet]
+        uw_nbr_fluxes = angular_fluxes[uw_nbr]
+
+        # Determine the permutation of the uw nbr fluxes so that
+        # they match the ordering of the nodes on the face
+        uw_nbr_ang_flux_idxs = np.searchsorted()
+        
+
+    # # Construct inflow linear system
+    # m_2d_sum = np.zeros((4, 4))
+    # for if_face_idx in if_faces_idxs:
+    #     tet_normal = tet_normals[if_face_idx]
+    #     alpha = np.dot(dir_vec, tet_normal) # Constant
+
+    #     # Extract coordinates for each face
+    #     face_nodes = np.array(tet_faces[if_face_idx])
+    #     face_coords = np.zeros((3, 3))
+    #     for idx, node in enumerate(face_nodes):
+    #         face_coords[idx, :] = nodes[node, :]
+
+    #     # Compute cross-product of Jacobian matrix for each o.w. face
+    #     # (scaling factor for transformation)
+    #     j1 = face_coords[1, :] - face_coords[0, :]
+    #     j2 = face_coords[2, :] - face_coords[0, :]
+    #     abs_norm_cross_prod = np.linalg.norm(np.cross(j1, j2))
+
+    #     # The M^{2D}-diagonal entries are given by 
+    #     # \int_{ref. triangle} b_i * b*j dA = 
+    #     # 1/24 if i != j
+    #     # 1/12 if i  = j
+    #     m_2d = np.full((4, 4), 1/24.0)
+    #     np.fill_diagonal(m_2d, 1/12.0)
+
+    #     # Zero out the basis function that's zero on the current
+    #     # face
+    #     # This basis functions corresponds to the node that's not on
+    #     # the current face
+    #     zero_node = np.setdiff1d(tet_nodes, face_nodes, assume_unique=True)
+    #     zero_node_idx = np.nonzero(np.isin(tet_nodes, zero_node))[0]
+
+    #     m_2d[zero_node_idx, :] = 0.0; m_2d[:, zero_node_idx] = 0.0
+
+    #     # Add up the contributions the overall M^{2D} matrix
+    #     m_2d_sum += (alpha * abs_norm_cross_prod * m_2d)
+
+    return tot_surface_inflow_vec
+
+def construct_tot_int_linear_system(abs_det_jac, sigma_t):
+     # Construct total interaction linear system
+    tot_int_mat = np.full((4, 4), 2.0)
+    np.fill_diagonal(tot_int_mat, 1.0)
+
+    tot_int_mat *= ((1/120.0) * sigma_t * abs_det_jac)
+
+    return tot_int_mat
+
+def construct_streaming_linear_system(dir_vec, jac, abs_det_jac):
+    # Construct streaming linear system
+
+    # One can construct the Jacobian explicitly as follows,
+    # but I need to double check the math on this 
+    # inv_jac_t = np.zeros((3, 3))
+    # inv_jac_t[0, :] = np.cross(jac[:, 1], jac[:, 2])
+    # inv_jac_t[1, :] = np.cross(jac[:, 2], jac[:, 0])
+    # inv_jac_t[2, :] = np.cross(jac[:, 0], jac[:, 1])
+    # inv_jac_t /= det_jac
+
+    # For the time being, compute the inverse of the transpose
+    # of the Jacobian using NumPy
+    # This is computationally expensive, and I'll put in the 
+    # explicit expression for this inverse later
+    inv_jac_T = np.linalg.inv(jac.T) 
+
+    coeffs = np.zeros((4, 4))
+    grad_b1 = np.array([-1.0, -1.0, -1.0]).reshape((3, ))
+    grad_b2 = np.array([1.0, 0.0, 0.0]).reshape((3, ))
+    grad_b3 = np.array([0.0, 1.0, 0.0]).reshape((3, ))
+    grad_b4 = np.array([0.0, 0.0, 1.0]).reshape((3, ))
+
+    coeffs[0, 0] = np.dot(np.array(dir_vec), 
+                            inv_jac_T @ grad_b1)
+    coeffs[1, 1] = np.dot(np.array(dir_vec), 
+                            inv_jac_T @  grad_b2)
+    coeffs[2, 2] = np.dot(np.array(dir_vec), 
+                            inv_jac_T @ grad_b3)
+    coeffs[3, 3] = np.dot(np.array(dir_vec), 
+                            inv_jac_T @ grad_b4)
+    
+    streaming_mat = -coeffs * (abs_det_jac/24.0) * np.ones((4, 4))
+
+    return streaming_mat
+
 def main():
     # Create the mesh
     # l = 1.0
     # ms = 0.9
     mesh_fname = "cube.msh"
     # visualize_mesh = False
-    
     # create_cubic_mesh(l, ms, mesh_fname, visualize_mesh=visualize_mesh)
 
     # Extract the mesh info
@@ -762,25 +926,208 @@ def main():
     n_azi   = 6
     visualize_dirs = False
 
-    dir_vecs = create_dirs(n_polar=n_polar, n_azi=n_azi, visualize_dirs=visualize_dirs)
-    dir_idx  = 20
-    dir_vec  = dir_vecs[dir_idx]
+    dir_vecs, glc_weights = create_dirs(n_polar=n_polar, 
+                                        n_azi=n_azi, visualize_dirs=visualize_dirs)
 
-    # for dir_vec in dir_vecs:
-    #     for tet, tet_normals in tets_normals.items():
-    #         for normal in tet_normals:
-    #             if np.dot(dir_vec, normal) == 0.0:
-    #                 print("parallel")
-
-    # Plot the sweep order for a given direction vector
-    sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
-                                        tets_normals, boundary_faces)
-    tetrahedron_levels = compute_levels(sweep_order)
-
-    # plot_sweep_order(sweep_order, dir_vecs, dir_idx, nodes, tets_to_faces)
-
+    # NOTE: The below plotting code should be used
     # Plot the overall tetrahedral mesh and a given direction vector
-    print(dir_vec)
-    plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec)
+    # plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec)
+
+    # Array to store angular fluxes 
+    # ith row corresponds to ith cell, and jth row corresponds to jth angular flux in ith cell)
+    angular_fluxes = np.zeros((tetrahedrons.shape[0], 4))
+
+    # Array to store scalar fluxes
+    # ith row corresponds to ith cell
+    scalar_fluxes = np.zeros((tetrahedrons.shape[0], ))
+
+    # Isotropic, distributed volumetric source
+    # For time being, set it constant for each cell
+    q = 3.0/(4*np.pi)
+
+    # Total interaction cross-section
+    # For time being, set it constant for each cell
+    sigma_t = 1.0
+
+    # eps = 1e-10
+
+    # for tet_idx, tet in enumerate(tetrahedrons):
+    #     faces   = tets_to_faces[tet_idx]
+    #     normals = tets_normals[tet_idx]
+
+    #     for face_idx, face_normal in enumerate(normals):
+    #         face = faces[face_idx]
+
+    #         # Find neighboring tets sharing this face
+    #         nbr_idxs = []
+    #         for nbr_idx in np.arange(tetrahedrons.shape[0]):
+    #             if face in tets_to_faces[nbr_idx] and (nbr_idx != tet_idx):
+    #                 nbr_idxs.append(nbr_idx)
+    
+
+    # """
+    # Loop over all directions
+    for dir_idx, dir_vec in enumerate(dir_vecs):
+        sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
+                                            tets_normals, boundary_faces)
+        # Mapping from tetrahedron index to its sweep order level
+        tetrahedron_levels = compute_levels(sweep_order)
+
+        # Mapping from sweep order level to tetrahedron index
+        levels_to_tets = defaultdict(list)
+        for tet, level in tetrahedron_levels.items():
+            levels_to_tets[level].append(tet)
+
+        # Make a mapping from a tetrahedron to its upwind neighbors,
+        # if any
+        tets_to_uw_nbrs = defaultdict(list)
+
+        # Get maximum number of levels in sweep
+        num_levels = np.max(list(tetrahedron_levels.values()))
+        
+        level = 0 # Start at level 0
+
+        # Treat the tets in the first level of the sweep
+        # separately
+        for tet in levels_to_tets[level]:
+            # Nodes are ordered from least to greatest
+            tet_nodes = tetrahedrons[tet] # 1D array
+            # List of lists, where each list contains 3 nodes
+            tet_faces = tets_to_faces[tet] 
+            # List of 1D ndarrays
+            tet_normals = tets_normals[tet]
+
+            jac, det_jac, abs_det_jac = compute_jacobian(tet_nodes, nodes)
+
+            # Determine outflow and inflow faces
+            # For the time being, we don't assume any incident fluxes
+            # on the inflow faces of the tets that are first in the sweep
+            # order, so we don't use them
+            of_faces_idxs, _ = detetermine_of_and_if_faces(dir_vec, 
+                                                             tet_normals)
+
+            # The outflow faces are inflow faces for downwind tets, 
+            # so make a mapping to construct the upwind fluxes
+            for of_face_idx in of_faces_idxs:
+                of_face = tet_faces[of_face_idx]
+                # Get the tets that share this outflow face of the current tet,
+                # minus the current tet
+                tet_nbrs = np.array(faces_to_tets[tuple(of_face)])
+                tet_nbrs = tet_nbrs[tet_nbrs != tet]
+                # Check that the tet neighbors are downwind of the current tet
+                # If so, add them to the mapping
+                for tet_nbr in tet_nbrs:
+                    if tetrahedron_levels[tet_nbr] > level:
+                        tets_to_uw_nbrs[tet_nbr].append(tet)
+
+            # Construct the outflow faces linear system
+            m_2d_sum = construct_outflow_linear_system(dir_vec, tet_nodes,
+                                                       tet_faces, tet_normals,
+                                                       of_faces_idxs, nodes)
+
+            # Construct total interaction linear system
+            tot_int_mat = construct_tot_int_linear_system(abs_det_jac, sigma_t)
+
+            streaming_mat = construct_streaming_linear_system(dir_vec, jac, abs_det_jac)
+            
+            # Construct RHS vector for source term
+            q_rhs_vec = q * abs_det_jac * np.full((4, ), 1/24.0)
+
+            # Since we assume zero incident flux on the boundary, we 
+            # solve the system immediately
+            psi = np.linalg.solve(m_2d_sum + tot_int_mat + streaming_mat, 
+                                  q_rhs_vec)
+            
+            # Compute the angular flux at each node
+            angular_fluxes[tet, :] = psi
+
+            # Compute the volume-averaged angular flux
+            # psi_total_{k} = \sum_{i=1}^{4} psi_{k, i} \phi_{i}
+            # psi_avg_{k} = 
+            #           (1/V_{physical tet}) * 
+            #           \sum_{i=1}^{4} \int_{ref. tet} phi_{i, ref. tet} |det J| dV
+            # \int_{ref. tet} phi_{i, ref. tet} dV = |det J|/24
+            # (1/V_{physical tet}) = |det J|/6
+            # ((1/V_{physical tet}) = |det J|/6) * \int_{ref. tet} phi_{i, ref. tet} dV = |det J|/24
+            #                       = 1/4
+            psi_avg = 0.25 * np.sum(psi)
+
+            # Add the volume-average angular flux contribution from this direction
+            # to the corresponding scalar flux
+            scalar_fluxes[tet] += glc_weights[dir_idx] * psi_avg
+            
+
+        # Loop over the cells per the sweep order to compute angular fluxes
+        while level <= num_levels:
+            # Loop over tets at the current level
+            for tet in levels_to_tets[level]:
+                # Nodes are ordered from least to greatest
+                tet_nodes = tetrahedrons[tet] # 1D array
+                # List of lists, where each list contains 3 nodes
+                tet_faces = tets_to_faces[tet] 
+                # List of 1D ndarrays
+                tet_normals = tets_normals[tet]
+
+                jac, det_jac, abs_det_jac = compute_jacobian(tet_nodes, nodes)
+
+                # Determine outflow and inflow faces
+                # For the time being, we don't assume any incident fluxes
+                # on the inflow faces of the tets that are first in the sweep
+                # order, so we don't use them
+                of_faces_idxs, if_faces_idxs = detetermine_of_and_if_faces(dir_vec, 
+                                                                tet_normals)
+
+                # The outflow faces are inflow faces for downwind tets, 
+                # so make a mapping to construct the upwind fluxes
+                # for of_face in of_faces:
+                #     face_nodes = np.array(tet_faces[of_face])
+
+                # Construct the outflow faces linear system
+                m_2d_sum = construct_outflow_linear_system(dir_vec, tet_nodes,
+                                                        tet_faces, tet_normals,
+                                                        of_faces_idxs, nodes)
+
+                # Construct total interaction linear system
+                tot_int_mat = construct_tot_int_linear_system(abs_det_jac, sigma_t)
+
+                streaming_mat = construct_streaming_linear_system(dir_vec, jac, abs_det_jac)
+                
+                # Construct RHS vector for source term
+                q_rhs_vec = q * abs_det_jac * np.full((4, ), 1/24.0)
+
+                # Deal with inflow faces, which requires the upwind angular fluxes
+                # from the upwind tets
+
+                uw_nbrs = tets_to_uw_nbrs[tet]
+
+                # Since we assume zero incident flux on the boundary, we 
+                # solve the system immediately
+                psi = np.linalg.solve(m_2d_sum + tot_int_mat + streaming_mat, 
+                                    q_rhs_vec)
+                
+                # Compute the angular flux at each node
+                angular_fluxes[tet, :] = psi
+
+                # Compute the volume-averaged angular flux
+                # psi_total_{k} = \sum_{i=1}^{4} psi_{k, i} \phi_{i}
+                # psi_avg_{k} = 
+                #           (1/V_{physical tet}) * 
+                #           \sum_{i=1}^{4} \int_{ref. tet} phi_{i, ref. tet} |det J| dV
+                # \int_{ref. tet} phi_{i, ref. tet} dV = |det J|/24
+                # (1/V_{physical tet}) = |det J|/6
+                # ((1/V_{physical tet}) = |det J|/6) * \int_{ref. tet} phi_{i, ref. tet} dV = |det J|/24
+                #                       = 1/4
+                psi_avg = 0.25 * np.sum(psi)
+
+                # Add the angular flux contribution from this direction
+                # to the corresponding scalar flux
+                scalar_fluxes[tet] += glc_weights[dir_idx] * psi_avg
+
+            # Advance to next level of solveable cells
+            level += 1
+        
+        # Reset angular flux matrix for next directional sweep
+        angular_fluxes[:, :] = 0.0
+    # """
 
 main()
