@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.animation import FuncAnimation, FFMpegWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib import animation, cm
 import gmsh
 import meshio
 import sys
@@ -345,107 +346,6 @@ def reduce_deps(tet_idx, nbr_deps_per_tet, deps_per_tet, \
         if deps_per_tet[nbr_idx] == 0:
             solve_buffer.append(nbr_idx)
 
-# def compute_sweep_orders(dir_vecs, tetrahedrons, tets_to_faces, tets_normals,
-#                          boundary_faces):
-#     # Store task graph for each direction vector
-#     sweep_orders = []
-
-#     for i, dir in enumerate(dir_vecs):
-#         # Map to store the number of dependecies for each tet
-#         # Each tet starts off with 3 dependencies, equal to the number of faces in a tet
-#         deps_per_tet = {tet_idx: 4 for tet_idx in np.arange(tetrahedrons.shape[0])}
-        
-#         # Map to store, for a given tet, the neighboring tets that require information from 
-#         # the tet's outflow faces
-#         nbr_deps_per_tet = {i: [] for i in np.arange(tetrahedrons.shape[0])}
-
-#         # Loop over each tet and determine the number of dependencies we can reduce:
-#         # (1) if the tet is a boundary tet, and has boundary faces that are inflow
-#         #     faces relative to the current direction vector, reduce the number of deps by however
-#         #     many such boundary faces
-#         # (2) for every tet, if the tet has outflow edges, reduce the number of deps
-#         #     by however many such faces
-#         for tet_idx, tet in enumerate(tetrahedrons):
-#             faces   = tets_to_faces[tet_idx]
-#             normals = tets_normals[tet_idx]
-#             for face_idx, face_normal in enumerate(normals):
-#                 face = faces[face_idx]
-                
-#                 dp   = np.dot(dir, face_normal)
-
-#                 # If outflow face, reduce # of dependencies for tet by 1
-#                 if dp >= 0.0:
-#                     deps_per_tet[tet_idx] -= 1
-                
-#                 # If boundary face and is an inflow face (relative to dir),
-#                 # reduce the tet's dependencies by 1 since by impose BCs
-#                 # on boundary faces
-#                 if (tuple(face) in boundary_faces) and dp < 0.0:
-#                     deps_per_tet[tet_idx] -= 1
-
-#         # Initialize a task-directed graph (or DAG) to determine the order
-#         # in which we should solve over the tets, for the current direction,
-#         # using the flow of information in and out of the faces
-#         sweep_order = nx.DiGraph()
-
-#         # Add dependencies from a tet's outflow faces to its neighboring tets'
-#         # inflow faces
-#         for tet_idx, tet in enumerate(tetrahedrons):
-#             faces   = tets_to_faces[tet_idx]
-#             normals = tets_normals[tet_idx]
-
-#             for face_idx, face_normal in enumerate(normals):
-#                 face = faces[face_idx]
-
-#                 # Find neighboring tets sharing this face
-#                 nbr_idxs = []
-#                 for nbr_idx in np.arange(tetrahedrons.shape[0]):
-#                     if face in tets_to_faces[nbr_idx] and (nbr_idx != tet_idx):
-#                         nbr_idxs.append(nbr_idx)
-                
-#                 for nbr_idx in nbr_idxs:
-#                     # Check if the current face of the current tet is an outflow
-#                     # face
-#                     # # If so, then the same face for neighboring tets is an inflow face
-#                     dp = np.dot(dir, face_normal)
-#                     if dp >= 0.0: # Check for outflow edge
-#                         sweep_order.add_edge(tet_idx, nbr_idx)
-#                         nbr_deps_per_tet[tet_idx].append(nbr_idx)
-
-
-#         # Buffer of tets that are ready to solve (tets that have zero dependencies)
-#         solve_buffer = deque([tet_idx for tet_idx, deps in deps_per_tet.items() if deps == 0])
-
-#         # Determine solve order of the tets for the current direction
-#         solve_order = []
-
-#         while solve_buffer:
-#             # Pop the next tet that is ready to solve
-#             tet_idx = solve_buffer.popleft()
-#             solve_order.append(tet_idx)
-#             reduce_deps(tet_idx, nbr_deps_per_tet, deps_per_tet, \
-#                         solve_buffer, sweep_order)
-            
-#         # # Perform a topological sort on the task graph
-#         # top_order = list(nx.topological_sort(sweep_order))
-#         # faces_list = list(sweep_order.edges())
-
-#         # plt.figure(figsize=(8, 6))
-
-#         # # Draw nodes, edges, and labels
-#         # pos = nx.spring_layout(sweep_order)
-#         # nx.draw(sweep_order, pos, with_labels=True, node_color="lightblue", \
-#         #         arrows=True, node_size=500, font_size=10, font_weight="bold")
-        
-#         # # Draw edge labels to show deps.
-#         # edge_labels = {(u, v): f'{u} -> {v}' for u,v in faces_list}
-#         # nx.draw_networkx_edge_labels(sweep_order, pos, edge_labels=edge_labels, font_color='red', font_size=5)
-#         # plt.show()
-        
-#         sweep_orders.append(sweep_order)
-    
-#     return sweep_orders
-
 def compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces, tets_normals,
                          boundary_faces):
 
@@ -669,6 +569,119 @@ def plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec,
     plt.ioff()
     plt.show()
 
+def compute_total_frames(tetrahedrons, tets_to_faces, tets_normals,
+                         boundary_faces, dir_vecs):
+    total_frames = 0
+
+    for dir_vec in dir_vecs:
+        # Compute sweep order for the current direction vector
+        sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
+                                            tets_normals, boundary_faces)
+        
+        # Mapping from tetrahedron index to its sweep order level
+        tetrahedron_levels = compute_levels(sweep_order)
+
+        # Add the max number of levels in the current sweep order
+        # to the total_frames variable
+        # We sum over all the max number of levels for each sweep order to ensure
+        # that when we plot the sweep animation for a given direction vector, there
+        # are enough animation frames to display the entire sweep order
+
+        total_frames += max(tetrahedron_levels.values()) + 1
+
+    return total_frames
+
+def create_combined_animation(nodes, tetrahedrons, tets_to_faces, tets_normals,
+                              boundary_faces, direction_vectors, total_frames,
+                              output_file="multi_direction_sweep.mp4", save_as_gif=False):
+    """
+    Create an animation showing sweep order for multiple direction vectors.
+    
+    Parameters:
+    - nodes: Array of node coordinates.
+    - tets_to_faces: Dictionary mapping tetrahedron indices to face node indices.
+    - direction_vectors: List of direction vectors for the sweeps.
+    - output_file: Name of the output file (default: MP4 format).
+    - save_as_gif: Whether to save the animation as a GIF instead of MP4.
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Set up zoomed view
+    x_min, x_max = np.min(nodes[:, 0]), np.max(nodes[:, 0])
+    y_min, y_max = np.min(nodes[:, 1]), np.max(nodes[:, 1])
+    z_min, z_max = np.min(nodes[:, 2]), np.max(nodes[:, 2])
+    margin = 0.5
+    ax.set_xlim(x_min - margin, x_max + margin)
+    ax.set_ylim(y_min - margin, y_max + margin)
+    ax.set_zlim(z_min - margin, z_max + margin)
+
+    plot_objects = []
+    levels_cache = {}  # Cache to store tetrahedron levels for each direction vector
+    frame_to_direction = []  # Map each frame to a direction vector and level
+
+    # Precompute frame_to_direction for all directions and levels
+    for current_vector in direction_vectors:
+        if current_vector not in levels_cache:
+            dag = compute_sweep_order(current_vector, tetrahedrons, tets_to_faces,
+                                          tets_normals, boundary_faces)  # Generate the DAG
+            levels_cache[current_vector] = compute_levels(dag)  # Compute levels
+        
+        levels = levels_cache[current_vector]
+        num_levels = max(levels.values()) + 1
+        frame_to_direction.extend([(current_vector, level) for level in range(num_levels)])
+
+    def update(frame):
+        nonlocal plot_objects, frame_to_direction
+
+        # Get direction vector and level for the current frame
+        current_vector, current_level = frame_to_direction[frame]
+
+        # Remove previous plotted objects
+        while plot_objects:
+            plot_objects.pop().remove()
+
+        # Update title with the current direction vector
+        ax.set_title(f"Direction: [{current_vector[0]:.2f}, {current_vector[1]:.2f}, {current_vector[2]:.2f}]", fontsize=12)
+
+        # Plot tetrahedrons up to the current level
+        levels = levels_cache[current_vector]
+        colormap = cm.get_cmap("tab10", len(set(levels.values())))
+        for tet_index, tet_level in levels.items():
+            if tet_level <= current_level:
+                faces = tets_to_faces[tet_index]
+                face_coords = [nodes[face] for face in faces]
+                poly = Poly3DCollection(face_coords, color=colormap(tet_level), alpha=0.6, edgecolor="k")
+                ax.add_collection3d(poly)
+                plot_objects.append(poly)
+
+        # Plot the direction vector
+        vector_origin = np.array([x_max + margin, y_max + margin, z_max + margin])
+        vector_plot = ax.quiver(
+            vector_origin[0], vector_origin[1], vector_origin[2],  # Starting point
+            current_vector[0], current_vector[1], current_vector[2],  # Direction
+            color="red", linewidth=2, arrow_length_ratio=0.1
+        )
+        plot_objects.append(vector_plot)
+
+    # Total number of frames based on the precomputed frame_to_direction
+    total_frames = len(frame_to_direction)
+
+    # Create the FuncAnimation with a range of frames
+    ani = animation.FuncAnimation(fig, update, frames=total_frames, interval=1000, blit=False)
+
+    # Save the combined animation
+    ani.save(output_file, writer="ffmpeg", fps=10)
+
+    if save_as_gif:
+        ani.save(output_file.replace(".mp4", ".gif"), writer="pillow", fps=10)
+
+    plt.close(fig)
+
+# dag = compute_sweep_order(current_vector, tetrahedrons, tets_to_faces,
+#                                           tets_normals, boundary_faces)  # Generate the DAG
+# levels_cache[current_vector] = compute_levels(dag)  # Compute levels
+
 # Determine the outflow and inflow faces of a tetrahedron
 # Inputs: dir_vec   = 1D ndarray for the current direction vector
 #                     in the sweep
@@ -680,7 +693,7 @@ def plot_tetrahedral_mesh(nodes, tets_to_faces, tetrahedron_levels, dir_vec,
 #                     3 nodes
 #         tet_normals = List of 1D ndarrays, where each 1D ndarray is the
 #                       outward pointing normal for the corresponding tet. face                       face
-def detetermine_of_and_if_faces(dir_vec, tet_normals):
+def determine_of_and_if_faces(dir_vec, tet_normals):
 
     # Determine outflow and inflow faces
     of_faces_idxs = [] # List of face indices
@@ -751,6 +764,12 @@ def construct_outflow_linear_system(dir_vec, tet_nodes,
     
     return m_2d_sum
 
+def permute_fluxes(current_tet_ang_fluxes, upwind_tet_ang_fluxes,
+                   current_tet_nodes, upwind_tet_nodes,
+                   current_tet_face, upwind_tet_face):
+    pass
+    
+
 # Create overall upwind flux vector, initialized to 0
 # Loop through the inflow faces of the current tet
 #   - Construct the local M^{2D} matrix for the current face
@@ -766,7 +785,6 @@ def construct_inflow_vec(dir_vec, current_tet, tet_nodes,
                          if_faces_idxs, faces_to_tets,
                          angular_fluxes, nbr_tet_nodes, 
                          nodes):
-    
     tot_surface_inflow_vec = np.zeros((4, ))
     for if_face_idx in if_faces_idxs:
         face_nodes    = tet_faces[if_face_idx]
@@ -816,7 +834,7 @@ def construct_inflow_vec(dir_vec, current_tet, tet_nodes,
         # they match the ordering of the nodes on the face
         uw_nbr_ang_flux_idxs = np.searchsorted()
         
-
+    """
     # # Construct inflow linear system
     # m_2d_sum = np.zeros((4, 4))
     # for if_face_idx in if_faces_idxs:
@@ -853,6 +871,7 @@ def construct_inflow_vec(dir_vec, current_tet, tet_nodes,
 
     #     # Add up the contributions the overall M^{2D} matrix
     #     m_2d_sum += (alpha * abs_norm_cross_prod * m_2d)
+    """
 
     return tot_surface_inflow_vec
 
@@ -928,6 +947,16 @@ def main():
 
     dir_vecs, glc_weights = create_dirs(n_polar=n_polar, 
                                         n_azi=n_azi, visualize_dirs=visualize_dirs)
+    
+    # Total number of animation frames to create full sweep animation
+    # for all the direction vectors
+    total_frames = compute_total_frames(tetrahedrons, tets_to_faces, tets_normals,
+                                        boundary_faces, dir_vecs)
+    
+    # Create the combined animation (as MP4 and/or GIF)
+    create_combined_animation(nodes, tetrahedrons, tets_to_faces, tets_normals,
+                              boundary_faces, dir_vecs, total_frames, output_file="multi_direction_sweep.mp4",
+                              save_as_gif=True)
 
     # NOTE: The below plotting code should be used
     # Plot the overall tetrahedral mesh and a given direction vector
@@ -965,7 +994,7 @@ def main():
     #                 nbr_idxs.append(nbr_idx)
     
 
-    # """
+    """
     # Loop over all directions
     for dir_idx, dir_vec in enumerate(dir_vecs):
         sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
@@ -1003,9 +1032,12 @@ def main():
             # For the time being, we don't assume any incident fluxes
             # on the inflow faces of the tets that are first in the sweep
             # order, so we don't use them
-            of_faces_idxs, _ = detetermine_of_and_if_faces(dir_vec, 
+            # NOTE: RESTRUCTURE THIS FUNCTION - CAN'T USE IF STATEMENTS
+            # Instead, pre-compute the outflow and inflow faces for each tetrahedron
+            of_faces_idxs, _ = determine_of_and_if_faces(dir_vec, 
                                                              tet_normals)
 
+            # NOTE: GET RID OF THIS LOOP - CAN'T USE IF STATEMENTS
             # The outflow faces are inflow faces for downwind tets, 
             # so make a mapping to construct the upwind fluxes
             for of_face_idx in of_faces_idxs:
@@ -1074,7 +1106,7 @@ def main():
                 # For the time being, we don't assume any incident fluxes
                 # on the inflow faces of the tets that are first in the sweep
                 # order, so we don't use them
-                of_faces_idxs, if_faces_idxs = detetermine_of_and_if_faces(dir_vec, 
+                of_faces_idxs, if_faces_idxs = determine_of_and_if_faces(dir_vec, 
                                                                 tet_normals)
 
                 # The outflow faces are inflow faces for downwind tets, 
@@ -1128,6 +1160,6 @@ def main():
         
         # Reset angular flux matrix for next directional sweep
         angular_fluxes[:, :] = 0.0
-    # """
+    """
 
 main()
