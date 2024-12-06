@@ -1253,45 +1253,13 @@ def main():
                 # Get upwind tets
                 uw_neighbors = tets_to_uw_neighbors[tet]
 
-
-
-                """
-                # Approach:
-                # 1. Get the uw tets for the current tet
-                # 2. For each uw tet, determine which face it shares with the current tet
-                # 3. Find th
-                
-                # Get upwind tets
-                uw_neighbors = tets_to_uw_neighbors[tet]
-
-                # Determine which inflow faces correspond to which u.w. tets
-                for uw_neighbor in uw_neighbors:
-                    uw_neighbor_faces     = tets_to_faces[uw_neighbor]
-                    uw_neighbor_faces_set = set([tuple(face) for face in uw_neighbor_faces])
-                    common_face           = tet_faces_set.intersection(uw_neighbor_faces_set)
-                    common_face           = common_face.pop()
-                    common_face_list      = list(common_face)
-
-                    # Find the index of the common face in the list of faces 
-                    # for the uw neighbor and the current tet
-                    uw_neighbor_face_idx = uw_neighbor_faces.index(common_face_list)
-                    current_face_idx     = tet_faces.index(common_face_list)
-
-                    # We now need to determine the relative ordering of nodes in each tet
-                    # given that we know the index of this common face in the list of faces
-                    # for the uw neighbor and the current tet
-                    uw_neighbor_rel_face = face_indices[uw_neighbor_face_idx]
-                    current_rel_face     = face_indices[current_face_idx]
-
-                    # Now, we know how to permute the upwind fluxes to match the ordering
-                    # of fluxes on the current tet face
-                """
+                # Construct total surface inflow vector, which accounts for upwind 
+                # angular flux contributions
                 tot_surface_inflow_vec = construct_inflow_vec(dir_vec, tet_nodes, 
                                             tet_faces, tet_normals,
                                             uw_neighbors, tets_to_faces,
                                             angular_fluxes, nodes)
 
-                # MAKE SURE TO INCLUDE SURFACE INFLOW CONTRIBUTION
                 # Compute the angular flux at each node
                 psi = np.linalg.solve((m_2d_sum + tot_int_mat + streaming_mat), 
                                       (q_rhs_vec + tot_surface_inflow_vec))
