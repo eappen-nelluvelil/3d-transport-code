@@ -235,76 +235,107 @@ def find_boundary_and_internal_faces(faces_to_tets):
 # Generate discrete directions given the number of polar
 # and azimuthal angles
 # Also create the weights for GLC quadrature
-def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
-    # Polar angles
+# def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
+#     # Polar angles
+#     mus, mu_weights = np.polynomial.legendre.leggauss(n_polar)
+
+#     # Azimuthal angles
+#     azis, d_azi = np.linspace(0, 2*np.pi, num=n_azi, endpoint=False, retstep=True)
+#     azis += (0.5 * d_azi) # "shift" the angles to avoid 0
+
+#     # Plot discrete direction vectors on 3D unit sphere
+#     x_vals = []
+#     y_vals = []
+#     z_vals = []
+
+#     # List of weights for GLC quadrature
+#     glc_weights = []
+
+#     for mu, mu_w in zip(mus, mu_weights):
+#         for azi in azis:
+#             x = np.sqrt(1-mu**2)*np.cos(azi)
+#             y = np.sqrt(1-mu**2)*np.sin(azi)
+#             z = mu
+
+#             x_vals.append(x)
+#             y_vals.append(y)
+#             z_vals.append(z)
+
+#             glc_weights.append(mu_w)
+
+#     # Multiply by azimuthal weight
+#     glc_weights = np.array(glc_weights) * (2*np.pi/n_azi)
+
+#     # Normalize the GLC weights so that they sum up to 4*pi
+#     glc_weights = (glc_weights * (4 * np.pi))/np.sum(glc_weights)
+
+#     # Store direction vectors
+#     dir_vecs = list(zip(x_vals, y_vals, z_vals))
+
+#     if visualize_dirs:
+#         fig = plt.figure(figsize=(8,8))
+#         ax  = fig.add_subplot(111, projection="3d")
+
+#         # Plot the sphere
+#         u = np.linspace(0, 2*np.pi, 100)
+#         v = np.linspace(0, np.pi, 100)
+#         x_sphere = np.outer(np.cos(u), np.sin(v))
+#         y_sphere = np.outer(np.sin(u), np.sin(v))
+#         z_sphere = np.outer(np.ones(np.size(u)), np.cos(v))
+
+#         ax.plot_wireframe(x_sphere, y_sphere, z_sphere, color="black",
+#                         alpha=0.3)
+
+#         # Plot the discrete direction vectors as points
+#         ax.scatter(x_vals, y_vals, z_vals, color="red")
+
+#         # Plot x-, y-, and z-axes going through the sphere
+#         # ax.plot([-1, 1], [0, 0], [0, 0], color='black')  # X-axis
+#         # ax.plot([0, 0], [-1, 1], [0, 0], color='black')  # Y-axis
+#         # ax.plot([0, 0], [0, 0], [-1, 1], color='black')  # Z-axis
+
+#         # Set plot limits and labels
+#         ax.set_xlim([-1, 1])
+#         ax.set_ylim([-1, 1])
+#         ax.set_zlim([-1, 1])
+#         ax.set_xlabel("x")
+#         ax.set_ylabel("y")
+#         ax.set_zlabel("z")
+
+#         plt.show()
+
+#     return dir_vecs, glc_weights
+
+def create_dirs(n_polar=10, n_azi=10):
+    # Polar angles (Gauss-Legendre quadrature)
     mus, mu_weights = np.polynomial.legendre.leggauss(n_polar)
+    sqrt_1_minus_mu2 = np.sqrt(1 - mus**2)
 
-    # Azimuthal angles
-    azis, d_azi = np.linspace(0, 2*np.pi, num=n_azi, endpoint=False, retstep=True)
-    azis += d_azi/2.0 # "shift" the angles to avoid 0
+    # Azimuthal angles (equispaced)
+    azis = np.linspace(0, 2 * np.pi, num=n_azi, endpoint=False) + np.pi / n_azi
+    azi_weight = 2 * np.pi / n_azi  # Uniform weight for azimuthal angles
 
-    # Plot discrete direction vectors on 3D unit sphere
-    x_vals = []
-    y_vals = []
-    z_vals = []
+    # Compute the Cartesian components of the direction vectors
+    cos_azi = np.cos(azis)  # Shape: (n_azi,)
+    sin_azi = np.sin(azis)  # Shape: (n_azi,)
+    x = sqrt_1_minus_mu2[:, None] * cos_azi  # Shape: (n_polar, n_azi)
+    y = sqrt_1_minus_mu2[:, None] * sin_azi  # Shape: (n_polar, n_azi)
+    z = mus[:, None] * np.ones_like(azis)    # Shape: (n_polar, n_azi)
 
-    # List of weights for GLC quadrature
-    glc_weights = []
+    # Flatten the direction vectors into a single array
+    dir_vecs = np.column_stack((x.ravel(), y.ravel(), z.ravel()))  # Shape: (n_polar * n_azi, 3)
 
-    for mu, mu_w in zip(mus, mu_weights):
-        for azi in azis:
-            x = np.sqrt(1-mu**2)*np.cos(azi)
-            y = np.sqrt(1-mu**2)*np.sin(azi)
-            z = mu
+    # Expand mu_weights to match azimuthal angles
+    # Each polar weight is repeated n_azi times, then multiplied by azi_weight
+    weights = np.repeat(mu_weights, n_azi) * azi_weight  # Shape: (n_polar * n_azi,)
 
-            x_vals.append(x)
-            y_vals.append(y)
-            z_vals.append(z)
+    # Normalize weights to sum to 4*pi
+    weights *= (4 * np.pi) / np.sum(weights)
 
-            glc_weights.append(mu_w)
+    print(dir_vecs.shape)
+    print(weights.shape)
 
-    # Multiply by azimuthal weight
-    glc_weights = np.array(glc_weights) * (2*np.pi/n_azi)
-
-    # Normalize the GLC weights so that they sum up to 4*pi
-    glc_weights = (glc_weights * (4 * np.pi))/np.sum(glc_weights)
-
-    # Store direction vectors
-    dir_vecs = list(zip(x_vals, y_vals, z_vals))
-
-    if visualize_dirs:
-        fig = plt.figure(figsize=(8,8))
-        ax  = fig.add_subplot(111, projection="3d")
-
-        # Plot the sphere
-        u = np.linspace(0, 2*np.pi, 100)
-        v = np.linspace(0, np.pi, 100)
-        x_sphere = np.outer(np.cos(u), np.sin(v))
-        y_sphere = np.outer(np.sin(u), np.sin(v))
-        z_sphere = np.outer(np.ones(np.size(u)), np.cos(v))
-
-        ax.plot_wireframe(x_sphere, y_sphere, z_sphere, color="black",
-                        alpha=0.3)
-
-        # Plot the discrete direction vectors as points
-        ax.scatter(x_vals, y_vals, z_vals, color="red")
-
-        # Plot x-, y-, and z-axes going through the sphere
-        # ax.plot([-1, 1], [0, 0], [0, 0], color='black')  # X-axis
-        # ax.plot([0, 0], [-1, 1], [0, 0], color='black')  # Y-axis
-        # ax.plot([0, 0], [0, 0], [-1, 1], color='black')  # Z-axis
-
-        # Set plot limits and labels
-        ax.set_xlim([-1, 1])
-        ax.set_ylim([-1, 1])
-        ax.set_zlim([-1, 1])
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_zlabel("z")
-
-        plt.show()
-
-    return dir_vecs, glc_weights
+    return dir_vecs, weights
 
 # Compute a normal vector for the face of a tetrahedron,
 # which are defined by the nodes that make up the face
@@ -481,7 +512,7 @@ def compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces, tets_normals,
     # nx.draw_networkx_edge_labels(sweep_order, pos, edge_labels=edge_labels, font_color='red', font_size=5)
     # plt.show()
     
-    return sweep_order
+    return solve_order, sweep_order
 
 def compute_levels(dag):
     """
@@ -606,7 +637,7 @@ def compute_total_frames(tetrahedrons, tets_to_faces, tets_normals,
 
     for dir_vec in dir_vecs:
         # Compute sweep order for the current direction vector
-        sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
+        _, sweep_order = compute_sweep_order(dir_vec, tetrahedrons, tets_to_faces,
                                             tets_normals, boundary_faces)
         
         # Mapping from tetrahedron index to its sweep order level
@@ -654,7 +685,7 @@ def create_combined_animation(nodes, tetrahedrons, tets_to_faces, tets_normals,
     # Precompute frame_to_direction for all directions and levels
     for current_vector in direction_vectors:
         if current_vector not in levels_cache:
-            dag = compute_sweep_order(current_vector, tetrahedrons, tets_to_faces,
+            _, dag = compute_sweep_order(current_vector, tetrahedrons, tets_to_faces,
                                           tets_normals, boundary_faces)  # Generate the DAG
             levels_cache[current_vector] = compute_levels(dag)  # Compute levels
         
@@ -852,12 +883,11 @@ def main():
     tets_normals = compute_tet_normals(nodes, tetrahedrons, tets_to_faces)
 
     # Create discrete direction vectors
-    n_polar = 6
-    n_azi   = 6
+    n_polar = 20
+    n_azi   = 20
     visualize_dirs = False
 
-    dir_vecs, glc_weights = create_dirs(n_polar=n_polar, 
-                                        n_azi=n_azi, visualize_dirs=visualize_dirs)
+    dir_vecs, glc_weights = create_dirs(n_polar=n_polar, n_azi=n_azi)
     
     """
     # Total number of animation frames to create full sweep animation
@@ -910,100 +940,105 @@ def main():
     # 2nd attempt at transport solve, using the following looping order:
     # Loop for directions and compute sweep order
     for d_idx, d in enumerate(dir_vecs):
-        sweep_order = compute_sweep_order(d, tetrahedrons, tets_to_faces,
-                                          tets_normals, boundary_faces)
+        solve_order, sweep_order = compute_sweep_order(d, tetrahedrons, tets_to_faces,
+                                                       tets_normals, boundary_faces)
         
-        # Mapping from sweep order level to tetrahedron index
-        tets_to_levels = compute_levels(sweep_order)
-        levels_to_tets = defaultdict(list)
-        for tet, level in tets_to_levels.items():
-            levels_to_tets[level].append(tet)
+        # # Mapping from sweep order level to tetrahedron index
+        # tets_to_levels = compute_levels(sweep_order)
+        # levels_to_tets = defaultdict(list)
+        # for tet, level in tets_to_levels.items():
+        #     levels_to_tets[level].append(tet)
 
-        max_levels = np.max(list(tets_to_levels.values()))
+        # max_levels = np.max(list(tets_to_levels.values()))
 
-        # Loop through sweep order levels
-        for level in np.arange(max_levels):
-            current_level_tets = levels_to_tets[level]
-            # Loop through each tet at current sweep order level
-            for tet in current_level_tets:
-                tet_nodes = tetrahedrons[tet]
+        # Loop through each tet at current sweep order level
+        for tet in solve_order:
+            tet_nodes = tetrahedrons[tet]
 
-                # Compute Jacobian J of transformation from tet to reference
-                # 3D tet, as well as abs(|J|)
-                tet_jacobian, _, tet_jacobian_det = compute_jacobian(tet_nodes, nodes)
+            # Compute Jacobian J of transformation from tet to reference
+            # 3D tet, as well as abs(|J|)
+            tet_jacobian, _, tet_jacobian_det = compute_jacobian(tet_nodes, nodes)
 
-                # Compute total interaction contribution
-                tot_int_mat = total_interaction_contrib()
-                A += (sigma_t * tet_jacobian_det * tot_int_mat)
+            # Compute total interaction contribution
+            tot_int_mat = total_interaction_contrib()
+            A += (sigma_t * tet_jacobian_det * tot_int_mat)
 
-                # Compute streaming contribution
-                streaming_mat = streaming_contrib(d, tet_jacobian,
-                                                  tet_jacobian_det)
-                A += streaming_mat
+            # Compute streaming contribution
+            streaming_mat = streaming_contrib(d, tet_jacobian,
+                                                tet_jacobian_det)
+            A += streaming_mat
 
-                # Loop through each face of the current tet to add outflow 
-                # and inflow contributions
-                for face_idx, face_nodes in enumerate(tets_to_faces[tet]):
-                    # Face coordinates
-                    face_coords = faces_coords[tet, face_idx]
-                    
-                    # Outward pointing normal for face
-                    face_normal = face_normals[tet, face_idx]
+            # Loop through each face of the current tet to add outflow 
+            # and inflow contributions
+            for face_idx, face_nodes in enumerate(tets_to_faces[tet]):
+                # Face coordinates
+                face_coords = faces_coords[tet, face_idx]
+                
+                # Outward pointing normal for face
+                face_normal = face_normals[tet, face_idx]
 
-                    # Compute Jacobian of transformation from 
-                    # face to 2D reference triangle
-                    face_jacobian_det = compute_outflow_jacobian(face_coords)
+                # Compute Jacobian of transformation from 
+                # face to 2D reference triangle
+                face_jacobian_det = compute_outflow_jacobian(face_coords)
 
-                    alpha = np.dot(d, face_normal)
+                alpha = np.dot(d, face_normal)
 
-                    # Compute outflow/inflow contribution matrix
-                    m_2d = outflow_contrib(face_nodes, tet_nodes)
+                # Compute outflow/inflow contribution matrix
+                m_2d = outflow_contrib(face_nodes, tet_nodes)
 
-                    # Outflow face
-                    if alpha > 0.0:
-                        A += (alpha * face_jacobian_det * m_2d)
-                    # Inflow face
+                # Outflow face
+                if alpha > 0.0:
+                    A += (alpha * face_jacobian_det * m_2d)
+                # Inflow face
+                else:
+                    # Find the relative ordering of the nodes on this face for the current tet
+                    curr_tet_node_rel_order = face_indices[face_idx]
+
+                    # Compute inflow contribution (requires upwind flux info)
+                    # Find neighboring tet that shares this face
+                    upwind_tet = np.array(faces_to_tets[tuple(face_nodes)])
+                    upwind_tet = upwind_tet[upwind_tet != tet][0]
+
+                    permuted_angular_fluxes = np.zeros((4, ))
+                    # Check if the face is a boundary face
+                    # If it is a boundary face, then extract the incident flux info for this face
+                    if upwind_tet == -1:
+                        upwind_angular_fluxes = boundary_fluxes[tet, face_idx]
+                        permuted_angular_fluxes[curr_tet_node_rel_order] = upwind_angular_fluxes
+
+                    # Otherwise, grab the upwind tet angular fluxes for this face
                     else:
-                        # Find the relative ordering of the nodes on this face for the current tet
-                        curr_tet_node_rel_order = face_indices[face_idx]
+                        # Find the relative ordering of this face in the upwind tet faces
+                        # This determines how we permute the upwind angular fluxes for this face
+                        # to match the relative ordering of nodes for the same face on the current
+                        # tet
+                        upwind_tet_face_idx       = tets_to_faces[upwind_tet].index(face_nodes)
+                        upwind_tet_node_rel_order = face_indices[upwind_tet_face_idx]
+                        upwind_angular_fluxes     = angular_fluxes[upwind_tet]
 
-                        # Compute inflow contribution (requires upwind flux info)
-                        # Find neighboring tet that shares this face
-                        upwind_tet = np.array(faces_to_tets[tuple(face_nodes)])
-                        upwind_tet = upwind_tet[upwind_tet != tet][0]
+                        permuted_angular_fluxes[curr_tet_node_rel_order] = upwind_angular_fluxes[upwind_tet_node_rel_order]
 
-                        permuted_angular_fluxes = np.zeros((4, ))
-                        # Check if the face is a boundary face
-                        # If it is a boundary face, then extract the incident flux info for this face
-                        if upwind_tet == -1:
-                            upwind_angular_fluxes = boundary_fluxes[tet, face_idx]
-                            permuted_angular_fluxes[curr_tet_node_rel_order] = upwind_angular_fluxes
+                    b -= (alpha * face_jacobian_det * (m_2d @ permuted_angular_fluxes))
 
-                        # Otherwise, grab the upwind tet angular fluxes for this face
-                        else:
-                            # Find the relative ordering of this face in the upwind tet faces
-                            # This determines how we permute the upwind angular fluxes for this face
-                            # to match the relative ordering of nodes for the same face on the current
-                            # tet
-                            upwind_tet_face_idx       = tets_to_faces[upwind_tet].index(face_nodes)
-                            upwind_tet_node_rel_order = face_indices[upwind_tet_face_idx]
-                            upwind_angular_fluxes     = angular_fluxes[upwind_tet]
+            # Add volumetric source contribution
+            b += (q * tet_jacobian_det * np.full((4, ), 1/24.0))
 
-                            permuted_angular_fluxes[curr_tet_node_rel_order] = upwind_angular_fluxes[upwind_tet_node_rel_order]
+            # Solve for tet angular fluxes for this direction
+            angular_fluxes[tet] = np.linalg.solve(A, b)
 
-                        b -= (alpha * face_jacobian_det * (m_2d @ permuted_angular_fluxes))
+            # Zero out LHS matrix and RHS vector for next tet solve
+            A[:, :] = 0.0; b[:] = 0.0
 
-                # Add volumetric source contribution
-                b += (q * tet_jacobian_det * np.full((4, ), 1/24.0))
+        # print(f"Angular fluxes = {angular_fluxes}")
+        # Update angular flux contributions to scalar fluxes for this direction
+        # Angular fluxes are volume averaged 
+        scalar_fluxes += glc_weights[d_idx] * 0.25 * np.sum(angular_fluxes, axis=1)
 
-                angular_fluxes[tet] = np.linalg.solve(A, b)
-                print(f"Level = {level}, tet = {tet}, angular fluxes = {angular_fluxes[tet]}")
-                print(q/sigma_t)
-
-                # Zero out LHS matrix and RHS vector for next tet solve
-                A[:, :] = 0.0; b[:] = 0.0
-        
-        # print(angular_fluxes)
+        # Zero out angular fluxes for next direction
         angular_fluxes[:, :] = 0.0
+    
+    compare_scalar_fluxes = np.isclose(scalar_fluxes - 4*np.pi*q/sigma_t, 
+                                        np.zeros_like(scalar_fluxes))
+    print(compare_scalar_fluxes)
 
 main()
