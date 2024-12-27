@@ -105,33 +105,7 @@ def extract_mesh_info(mesh_fname):
     # Get the tetrahedral elements, i.e., which nodes make a tetrahedron
     tetrahedrons = np.sort(mesh.cells_dict.get("tetra"), axis=1)
 
-    # Get the edges of the tetrahedrons (connectivity of edges)
-    tetras_to_edges = defaultdict(list)
-    edges_to_tetras = defaultdict(list)
-    edges = []
-
-    for i, tetra in enumerate(tetrahedrons):
-        # Each tetrahedron has 6 edges (combination of 4 vertices taken 2 at a time)
-        edges.append(sorted([tetra[0], tetra[1]]))
-        edges.append(sorted([tetra[0], tetra[2]]))
-        edges.append(sorted([tetra[0], tetra[3]]))
-        edges.append(sorted([tetra[1], tetra[2]]))
-        edges.append(sorted([tetra[1], tetra[3]]))
-        edges.append(sorted([tetra[2], tetra[3]]))
-
-        # Map each tetrahedron to its edges
-        tetras_to_edges[i].append(sorted([tetra[0], tetra[1]]))
-        tetras_to_edges[i].append(sorted([tetra[0], tetra[2]]))
-        tetras_to_edges[i].append(sorted([tetra[0], tetra[3]]))
-        tetras_to_edges[i].append(sorted([tetra[1], tetra[2]]))
-        tetras_to_edges[i].append(sorted([tetra[1], tetra[3]]))
-        tetras_to_edges[i].append(sorted([tetra[2], tetra[3]]))
-
-    # Removing duplicate edges,
-    # since each shared edge will appear twice in the tetrahedron
-    edges = np.array([list(edge) for edge in set(tuple(sorted(edge)) for edge in edges)])
-
-    return (nodes, tetrahedrons, tetras_to_edges, edges_to_tetras, edges)
+    return (nodes, tetrahedrons)
 
 # Function to extract the faces of a tetrahedron
 def extract_faces(tet):
