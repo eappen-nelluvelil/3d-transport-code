@@ -103,10 +103,11 @@ def extract_mesh_info(mesh_fname):
     nodes = mesh.points  
 
     # Get the tetrahedral elements, i.e., which nodes make a tetrahedron
-    tetrahedrons = mesh.cells_dict.get("tetra")
+    tetrahedrons = np.sort(mesh.cells_dict.get("tetra"), axis=1)
+
     # Sort the nodes for each tetrahedron
-    for tet_idx, tet in enumerate(tetrahedrons):
-        tetrahedrons[tet_idx, :] = np.sort(tet)
+    # for tet_idx, tet in enumerate(tetrahedrons):
+    #     tetrahedrons[tet_idx, :] = np.sort(tet)
 
     # Get the edges of the tetrahedrons (connectivity of edges)
     tetras_to_edges = defaultdict(list)
