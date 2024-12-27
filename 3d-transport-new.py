@@ -232,80 +232,6 @@ def find_boundary_and_internal_faces(faces_to_tets):
 
     return boundary_faces, internal_faces
 
-# Generate discrete directions given the number of polar
-# and azimuthal angles
-# Also create the weights for GLC quadrature
-# def create_dirs(n_polar=10, n_azi=10, visualize_dirs=False):
-#     # Polar angles
-#     mus, mu_weights = np.polynomial.legendre.leggauss(n_polar)
-
-#     # Azimuthal angles
-#     azis, d_azi = np.linspace(0, 2*np.pi, num=n_azi, endpoint=False, retstep=True)
-#     azis += (0.5 * d_azi) # "shift" the angles to avoid 0
-
-#     # Plot discrete direction vectors on 3D unit sphere
-#     x_vals = []
-#     y_vals = []
-#     z_vals = []
-
-#     # List of weights for GLC quadrature
-#     glc_weights = []
-
-#     for mu, mu_w in zip(mus, mu_weights):
-#         for azi in azis:
-#             x = np.sqrt(1-mu**2)*np.cos(azi)
-#             y = np.sqrt(1-mu**2)*np.sin(azi)
-#             z = mu
-
-#             x_vals.append(x)
-#             y_vals.append(y)
-#             z_vals.append(z)
-
-#             glc_weights.append(mu_w)
-
-#     # Multiply by azimuthal weight
-#     glc_weights = np.array(glc_weights) * (2*np.pi/n_azi)
-
-#     # Normalize the GLC weights so that they sum up to 4*pi
-#     glc_weights = (glc_weights * (4 * np.pi))/np.sum(glc_weights)
-
-#     # Store direction vectors
-#     dir_vecs = list(zip(x_vals, y_vals, z_vals))
-
-#     if visualize_dirs:
-#         fig = plt.figure(figsize=(8,8))
-#         ax  = fig.add_subplot(111, projection="3d")
-
-#         # Plot the sphere
-#         u = np.linspace(0, 2*np.pi, 100)
-#         v = np.linspace(0, np.pi, 100)
-#         x_sphere = np.outer(np.cos(u), np.sin(v))
-#         y_sphere = np.outer(np.sin(u), np.sin(v))
-#         z_sphere = np.outer(np.ones(np.size(u)), np.cos(v))
-
-#         ax.plot_wireframe(x_sphere, y_sphere, z_sphere, color="black",
-#                         alpha=0.3)
-
-#         # Plot the discrete direction vectors as points
-#         ax.scatter(x_vals, y_vals, z_vals, color="red")
-
-#         # Plot x-, y-, and z-axes going through the sphere
-#         # ax.plot([-1, 1], [0, 0], [0, 0], color='black')  # X-axis
-#         # ax.plot([0, 0], [-1, 1], [0, 0], color='black')  # Y-axis
-#         # ax.plot([0, 0], [0, 0], [-1, 1], color='black')  # Z-axis
-
-#         # Set plot limits and labels
-#         ax.set_xlim([-1, 1])
-#         ax.set_ylim([-1, 1])
-#         ax.set_zlim([-1, 1])
-#         ax.set_xlabel("x")
-#         ax.set_ylabel("y")
-#         ax.set_zlabel("z")
-
-#         plt.show()
-
-#     return dir_vecs, glc_weights
-
 def create_dirs(n_polar=10, n_azi=10):
     # Polar angles (Gauss-Legendre quadrature)
     mus, mu_weights = np.polynomial.legendre.leggauss(n_polar)
@@ -331,9 +257,6 @@ def create_dirs(n_polar=10, n_azi=10):
 
     # Normalize weights to sum to 4*pi
     weights *= (4 * np.pi) / np.sum(weights)
-
-    print(dir_vecs.shape)
-    print(weights.shape)
 
     return dir_vecs, weights
 
