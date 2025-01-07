@@ -1,16 +1,17 @@
-import os
+# import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from matplotlib.animation import FuncAnimation, FFMpegWriter
+# from matplotlib.animation import FuncAnimation, FFMpegWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib import animation, cm
 import gmsh
 import meshio
-import sys
+# import sys
 from collections import defaultdict, deque
 import networkx as nx
-from IPython.display import HTML
+# from IPython.display import HTML
+import pyvista as pv
 
 # Function to create a 3D tetrahedral cubic mesh in gmsh
 def create_cubic_mesh(l, ms, mesh_fname, visualize_mesh=False):
@@ -716,7 +717,7 @@ def main():
     # create_cubic_mesh(l, ms, mesh_fname, visualize_mesh=visualize_mesh)
 
     # Extract the mesh info
-    nodes, tetrahedrons, _, _, _ = extract_mesh_info(mesh_fname)
+    nodes, tetrahedrons = extract_mesh_info(mesh_fname)
 
     # all_faces, unique_faces = extract_unique_faces(tetrahedrons)
 
@@ -773,13 +774,14 @@ def main():
 
     boundary_faces, _ = find_boundary_and_internal_faces(faces_to_tets)
 
+    # NOTE: This is redunant; refactor code to make use of already computed
+    # `face_normals`
     # Compute the outward facing normals for the tetrahedrons
     tets_normals = compute_tet_normals(nodes, tetrahedrons, tets_to_faces)
 
     # Create discrete direction vectors
     n_polar = 20
     n_azi   = 20
-    visualize_dirs = False
 
     dir_vecs, glc_weights = create_dirs(n_polar=n_polar, n_azi=n_azi)
     
@@ -799,8 +801,21 @@ def main():
     # Plot the overall tetrahedral mesh and a given direction vector
     # plot_tetrahedral_mesh(nodes, tets_to_faces, tets_to_levels, dir_vec)
 
+    # Isotropic, distributed volumetric source
+    # For time being, set it constant for each cell
+    q = 3.0/(4*np.pi)
+
+    # Total interaction cross-section
+    # For time being, set it constant for each cell
+    sigma_t = 1.0
+
+    # eps = 1e-10
+
     # Array to store boundary conditions for boundary faces
-    incident_boundary_fluxes = 3.0/(4*np.pi)
+    # For an isotropic, distributed volumetric source and constant total interaction cross section (same for every tet),
+    # the angular and scalar fluxes will be constant and equal to q/(sigma_t * 4 * pi) [q/sigma_t in this case b/c of division by 4*pi
+    # in q]
+    incident_boundary_fluxes = q/sigma_t
     boundary_fluxes = np.zeros((tetrahedrons.shape[0], 4, 3))
     for tet in np.arange(tetrahedrons.shape[0]):
         for face_idx, face_nodes in enumerate(tets_to_faces[tet]):
@@ -815,16 +830,6 @@ def main():
     # Array to store scalar fluxes
     # ith row corresponds to ith cell
     scalar_fluxes = np.zeros((tetrahedrons.shape[0], ))
-
-    # Isotropic, distributed volumetric source
-    # For time being, set it constant for each cell
-    q = 3.0/(4*np.pi)
-
-    # Total interaction cross-section
-    # For time being, set it constant for each cell
-    sigma_t = 1.0
-
-    # eps = 1e-10
 
     # Create LHS matrix and RHS vector for solving over tets
     # (will be zeroed out after solving a tet)
@@ -925,14 +930,37 @@ def main():
 
         # print(f"Angular fluxes = {angular_fluxes}")
         # Update angular flux contributions to scalar fluxes for this direction
-        # Angular fluxes are volume averaged 
+        # Angular fluxes are volume averaged (for each tet, we take an equal contribution from the 4 angular fluxes)
         scalar_fluxes += glc_weights[d_idx] * 0.25 * np.sum(angular_fluxes, axis=1)
 
         # Zero out angular fluxes for next direction
         angular_fluxes[:, :] = 0.0
     
-    compare_scalar_fluxes = np.isclose(scalar_fluxes - 4*np.pi*q/sigma_t, 
-                                        np.zeros_like(scalar_fluxes))
-    print(compare_scalar_fluxes)
+    # compare_scalar_fluxes = np.isclose(scalar_fluxes - 4*np.pi*q/sigma_t, 
+    #                                     np.zeros_like(scalar_fluxes))
+    # print(compare_scalar_fluxes)
+
+    ### Visualize the scalar fluxes using VTK
+    from pyvista import CellType
+
+    # Step 1: Define the connectivity for tetrahedral cells
+    # Each cell has a "connectivity" consisting of the number of points (4 for tetrahedrons) + node indices
+    num_cells = len(tetrahedrons)
+    cell_types = np.full(num_cells, CellType.TETRA, dtype=np.uint8)
+
+    # Flatten tetrahedral connectivity and prepend the number of points per cell
+    connectivity = np.hstack([[4] + list(cell) for cell in tetrahedrons])
+
+    # Step 2: Create a PyVista UnstructuredGrid
+    grid = pv.UnstructuredGrid(connectivity, cell_types, nodes)
+
+    # Step 3: Add scalar flux as cell data
+    grid.cell_data['Scalar Flux'] = scalar_fluxes
+
+    # Step 4: Visualize the scalar flux
+    plotter = pv.Plotter()
+    plotter.add_mesh(grid, scalars='Scalar Flux', cmap='viridis', show_edges=True)
+    plotter.add_scalar_bar(title="Scalar Flux")
+    plotter.show()
 
 main()
